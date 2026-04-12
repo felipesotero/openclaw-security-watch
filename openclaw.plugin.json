@@ -1,0 +1,60 @@
+{
+  "id": "security-watch",
+  "name": "Security Watch",
+  "description": "Fail-closed before_tool_call guardrails for sensitive tools with local audit logs and approval support.",
+  "version": "1.0.0",
+  "enabledByDefault": false,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["monitor", "approval", "strict"]
+      },
+      "policyPath": {
+        "type": "string"
+      },
+      "logPath": {
+        "type": "string"
+      },
+      "approvalTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000
+      },
+      "approvalTimeoutBehavior": {
+        "type": "string",
+        "enum": ["allow", "deny"]
+      },
+      "blockOnValidatorFailure": {
+        "type": "boolean"
+      }
+    }
+  },
+  "uiHints": {
+    "mode": {
+      "label": "Mode",
+      "help": "monitor=log only, approval=block critical and ask approval for medium risk, strict=block critical and medium risk"
+    },
+    "policyPath": {
+      "label": "Policy path",
+      "help": "Optional path to a JSON policy file. Defaults to the bundled policy."
+    },
+    "logPath": {
+      "label": "Log path",
+      "help": "Optional JSONL audit path. Defaults to ~/.openclaw/logs/security-watch-events.jsonl"
+    },
+    "approvalTimeoutMs": {
+      "label": "Approval timeout (ms)",
+      "help": "Timeout for before_tool_call approval prompts"
+    },
+    "approvalTimeoutBehavior": {
+      "label": "Approval timeout behavior",
+      "help": "Whether approval timeout allows or denies the tool call"
+    },
+    "blockOnValidatorFailure": {
+      "label": "Block on validator failure",
+      "help": "When true, unexpected validator failures block the tool call"
+    }
+  }
+}

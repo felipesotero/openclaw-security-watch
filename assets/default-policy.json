@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "logPath": "~/.openclaw/logs/security-watch-events.jsonl",
+  "trustedDomains": [
+    "docs.openclaw.ai",
+    "github.com",
+    "raw.githubusercontent.com",
+    "clawhub.ai"
+  ],
+  "trustedWorkspacePrefixes": [
+    "/home/openclaw/.openclaw/workspace",
+    "/home/openclaw/.openclaw/workspace-comercial",
+    "/home/openclaw/.openclaw/workspace-financeiro",
+    "/home/openclaw/.openclaw/workspace-posreuniao"
+  ],
+  "critical": {
+    "toolNames": ["bash", "exec", "read", "write", "edit", "webfetch"],
+    "commandPatterns": [
+      "(^|\\s)sudo(\\s|$)",
+      "(^|\\s)su(\\s|$)",
+      "rm\\s+-rf\\s+/($|\\s)",
+      "mkfs(\\.|\\s)",
+      "dd\\s+if=",
+      "nc\\s+.*-e",
+      "curl\\s+.*\\|\\s*(sh|bash)",
+      "wget\\s+.*\\|\\s*(sh|bash)",
+      "base64\\s+-d.*\\|\\s*(sh|bash)"
+    ],
+    "pathPatterns": [
+      "^/etc/shadow$",
+      "/\\.ssh/",
+      "id_rsa",
+      "\\.pem$",
+      "\\.p12$",
+      "\\.env($|\\.)",
+      "/secrets?/",
+      "/credentials?/",
+      "/home/openclaw/\\.openclaw/exec-approvals\\.json$"
+    ],
+    "urlPatterns": [
+      "^file://",
+      "^https?://127\\.",
+      "^https?://10\\.",
+      "^https?://192\\.168\\.",
+      "^https?://172\\.(1[6-9]|2[0-9]|3[0-1])\\.",
+      "^https?://169\\.254\\.169\\.254",
+      "^https?://localhost(:|/|$)"
+    ]
+  },
+  "approval": {
+    "commandPatterns": [
+      "chmod\\s+",
+      "chown\\s+",
+      "systemctl\\s+",
+      "docker\\s+",
+      "curl\\s+",
+      "wget\\s+",
+      "gh\\s+",
+      "git\\s+reset\\s+--hard"
+    ],
+    "pathPatterns": [
+      "^/etc/",
+      "/home/openclaw/\\.openclaw/",
+      "^/var/log/"
+    ],
+    "urlPatterns": [
+      "^https?://",
+      "\\?.*=.*"
+    ]
+  }
+}

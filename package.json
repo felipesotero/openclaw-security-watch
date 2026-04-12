@@ -1,0 +1,35 @@
+{
+  "name": "openclaw-security-watch",
+  "version": "1.0.0",
+  "description": "Fail-closed before_tool_call security plugin and companion skill for OpenClaw",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/felipesotero/openclaw-security-watch.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.4.9",
+      "minGatewayVersion": "2026.4.9"
+    },
+    "build": {
+      "openclawVersion": "2026.4.9",
+      "pluginSdkVersion": "2026.4.9"
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check index.js && node --check lib/policy.js && node --check scripts/security-summary.mjs"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.9"
+  }
+}
