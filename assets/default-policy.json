@@ -13,6 +13,25 @@
     "/home/openclaw/.openclaw/workspace-financeiro",
     "/home/openclaw/.openclaw/workspace-posreuniao"
   ],
+  "readAllow": {
+    "pathPatterns": [
+      "^/home/[^/]+/\\.local/lib/node_modules/openclaw/skills/[^/]+/SKILL\\.md$",
+      "^/home/[^/]+/\\.local/lib/node_modules/openclaw/dist/extensions/[^/]+/skills/[^/]+/SKILL\\.md$",
+      "^/home/[^/]+/\\.openclaw/skills/[^/]+/SKILL\\.md$",
+      "^/home/[^/]+/\\.openclaw/skills/[^/]+/_meta\\.json$",
+      "^/home/[^/]+/\\.openclaw/skills/[^/]+/\\.clawhub/origin\\.json$",
+      "^/home/[^/]+/\\.openclaw/skills/[^/]+/(README|SECURITY|CHANGELOG)\\.md$",
+      "^/home/[^/]+/\\.openclaw/extensions/[^/]+/openclaw\\.plugin\\.json$",
+      "^/home/[^/]+/\\.openclaw/extensions/[^/]+/skill/SKILL\\.md$",
+      "^/home/[^/]+/\\.local/lib/node_modules/openclaw/dist/extensions/[^/]+/openclaw\\.plugin\\.json$",
+      "^/home/[^/]+/\\.openclaw/extensions/security-watch/assets/default-policy\\.json$",
+      "^/home/[^/]+/\\.openclaw/extensions/security-watch/README\\.md$",
+      "^/home/[^/]+/\\.openclaw/agents/[^/]+/agent/auth-profiles\\.json$",
+      "^/home/[^/]+/\\.openclaw/agents/[^/]+/agent/models\\.json$",
+      "^/home/[^/]+/\\.local/lib/node_modules/openclaw/package\\.json$",
+      "^/home/[^/]+/\\.local/lib/node_modules/openclaw/README\\.md$"
+    ]
+  },
   "critical": {
     "toolNames": ["bash", "exec", "read", "write", "edit", "webfetch"],
     "commandPatterns": [

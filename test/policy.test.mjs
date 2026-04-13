@@ -14,6 +14,22 @@ test("requires approval for sensitive read", () => {
   assert.equal(result.outcome, "approval");
 });
 
+test("allows bundled skill docs outside workspace after path normalization", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "~/.local/lib/node_modules/openclaw/skills/gog/SKILL.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_external_doc");
+});
+
+test("allows plugin manifest outside workspace", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "~/.openclaw/extensions/security-watch/openclaw.plugin.json" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("still requires approval for arbitrary package tree reads", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "~/.local/lib/node_modules/openclaw/node_modules/foo/SKILL.md" } }, policy);
+  assert.equal(result.outcome, "approval");
+});
+
 test("allows trusted docs host", () => {
   const result = evaluateToolCall({ toolName: "webfetch", params: { url: "https://docs.openclaw.ai/plugins/sdk-overview" } }, policy);
   assert.equal(result.outcome, "allow");
