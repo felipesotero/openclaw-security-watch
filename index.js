@@ -3,7 +3,9 @@ import {
   appendJsonl,
   buildAuditRecord,
   evaluateToolCall,
+  computePolicyHash,
   loadPolicy,
+  SessionApprovalCache,
   summarizeDecision
 } from "./lib/policy.js";
 
@@ -20,8 +22,11 @@ export default definePluginEntry({
   name: "Security Watch",
   description: "Fail-closed before_tool_call guardrails for sensitive tools with audit logs and approvals",
   register(api) {
+    const sessionCache = new SessionApprovalCache();
+
     api.on("before_tool_call", async (event, ctx) => {
       const policy = loadPolicy(api.pluginConfig ?? {});
+      const pHash = computePolicyHash(policy);
       const context = {
         jobId: ctx.jobId || ctx.runId,
         agentId: ctx.agentId,
@@ -38,7 +43,7 @@ export default definePluginEntry({
 
       try {
         const decision = evaluateToolCall(event, policy, context);
-        logSafe(policy, buildAuditRecord({ phase: "before_tool_call", classification: decision.outcome === "allow" ? "no_match" : "threat_detected", decision: decision.outcome, reasons: decision.reasons, severity: decision.severity, subject: decision.subject, ...scope }), api.logger);
+        logSafe(policy, buildAuditRecord({ phase: "before_tool_call", classification: decision.outcome === "allow" ? "no_match" : "threat_detected", decision: decision.outcome, reasons: decision.reasons, severity: decision.severity, subject: decision.subject, policyHash: pHash, jobId: context.jobId || null, agentId: context.agentId || null, grantId: null, ...scope }), api.logger);
 
         if (policy.mode === "monitor") return;
 
@@ -57,21 +62,41 @@ export default definePluginEntry({
             };
           }
 
+          if (sessionCache.has(ctx.sessionId, event.toolName, decision.subject)) {
+            logSafe(policy, buildAuditRecord({
+              phase: "before_tool_call",
+              classification: "session_dedup",
+              decision: "allow",
+              reasons: ["session_approval_cached"],
+              severity: "info",
+              subject: decision.subject,
+              policyHash: pHash,
+              jobId: context.jobId || null,
+              agentId: context.agentId || null,
+              grantId: null,
+              ...scope
+            }), api.logger);
+            return;
+          }
+
           return {
             requireApproval: {
               title: `Security Watch approval for ${event.toolName}`,
               description: summarizeDecision(policy, decision),
               severity: decision.severity,
               timeoutMs: policy.approvalTimeoutMs,
-              timeoutBehavior: policy.approvalTimeoutBehavior,
+              timeoutBehavior: context.isAutomation ? "deny" : policy.approvalTimeoutBehavior,
               onResolution: (resolution) => {
-                logSafe(policy, buildAuditRecord({ phase: "approval_resolution", resolution, reasons: decision.reasons, severity: decision.severity, subject: decision.subject, ...scope }), api.logger);
+                if (resolution === "approved" || resolution === "allow") {
+                  sessionCache.record(ctx.sessionId, event.toolName, decision.subject);
+                }
+                logSafe(policy, buildAuditRecord({ phase: "approval_resolution", resolution, reasons: decision.reasons, severity: decision.severity, subject: decision.subject, policyHash: pHash, jobId: context.jobId || null, agentId: context.agentId || null, grantId: null, ...scope }), api.logger);
               }
             }
           };
         }
       } catch (error) {
-        logSafe(policy, buildAuditRecord({ phase: "before_tool_call", classification: "validator_failure", decision: policy.blockOnValidatorFailure ? "block" : "allow", reasons: [String(error)], severity: "critical", subject: "", ...scope }), api.logger);
+        logSafe(policy, buildAuditRecord({ phase: "before_tool_call", classification: "validator_failure", decision: policy.blockOnValidatorFailure ? "block" : "allow", reasons: [String(error)], severity: "critical", subject: "", policyHash: pHash, jobId: context.jobId || null, agentId: context.agentId || null, grantId: null, ...scope }), api.logger);
         if (policy.blockOnValidatorFailure) {
           return {
             block: true,
@@ -83,7 +108,8 @@ export default definePluginEntry({
 
     api.on("after_tool_call", async (event, ctx) => {
       const policy = loadPolicy(api.pluginConfig ?? {});
-      logSafe(policy, buildAuditRecord({ phase: "after_tool_call", toolName: event.toolName, toolCallId: event.toolCallId, runId: event.runId, agentId: ctx.agentId, sessionId: ctx.sessionId, sessionKey: ctx.sessionKey, durationMs: event.durationMs, error: event.error || null }), api.logger);
+      const pHash = computePolicyHash(policy);
+      logSafe(policy, buildAuditRecord({ phase: "after_tool_call", toolName: event.toolName, toolCallId: event.toolCallId, runId: event.runId, agentId: ctx.agentId, sessionId: ctx.sessionId, sessionKey: ctx.sessionKey, durationMs: event.durationMs, error: event.error || null, policyHash: pHash, jobId: ctx.jobId || null, grantId: null }), api.logger);
     });
   }
 });

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { evaluateToolCall, loadPolicy, summarizeDecision } from "../lib/policy.js";
+import { SessionApprovalCache, buildAuditRecord, computePolicyHash, evaluateToolCall, loadPolicy, summarizeDecision } from "../lib/policy.js";
 import { addPendingGrant, findMatchingGrant, loadPreapprovals } from "../lib/preapprovals.js";
 
 const policy = loadPolicy({ mode: "approval" });
@@ -51,16 +51,34 @@ test("allows another absolute workspace read regardless of filename", () => {
   assert.equal(result.reasons[0], "read_allow:trusted_workspace");
 });
 
-test("allows relative workspace file reads regardless of filename", () => {
+test("relative workspace file reads outside trusted prefixes require approval", () => {
   const result = evaluateToolCall({ toolName: "read", params: { path: "notes/custom-playbook.md" } }, policy);
-  assert.equal(result.outcome, "allow");
-  assert.equal(result.reasons[0], "read_allow:trusted_workspace_relative");
+  assert.equal(result.outcome, "approval");
 });
 
-test("allows relative workspace state file reads", () => {
+test("relative workspace state file reads outside trusted prefixes require approval", () => {
   const result = evaluateToolCall({ toolName: "read", params: { path: "state/comercial_heartbeat_seen_messages.txt" } }, policy);
-  assert.equal(result.outcome, "allow");
-  assert.equal(result.reasons[0], "read_allow:trusted_workspace_relative");
+  assert.equal(result.outcome, "approval");
+});
+
+test("relative path that resolves outside all workspace prefixes requires approval", () => {
+  const restrictivePolicy = {
+    ...policy,
+    trustedWorkspacePrefixes: ["/nonexistent/workspace"]
+  };
+  const result = evaluateToolCall(
+    { toolName: "read", params: { path: "notes/meeting.md" } },
+    restrictivePolicy
+  );
+  assert.equal(result.outcome, "approval");
+});
+
+test("relative path with deep traversal outside workspace requires approval", () => {
+  const result = evaluateToolCall(
+    { toolName: "read", params: { path: "../../etc/passwd" } },
+    policy
+  );
+  assert.equal(result.outcome, "approval");
 });
 
 test("requires approval for relative parent traversal outside workspace", () => {
@@ -89,9 +107,9 @@ test("still requires approval for read of openclaw.json (not in workspace)", () 
   assert.equal(result.outcome, "approval");
 });
 
-test("relative workspace path is normalized to absolute subject before allow", () => {
+test("relative workspace path is normalized to absolute subject before approval", () => {
   const result = evaluateToolCall({ toolName: "read", params: { path: "somefile.txt" } }, policy);
-  assert.equal(result.outcome, "allow");
+  assert.equal(result.outcome, "approval");
   assert.ok(result.subject.startsWith("/"), "subject should be absolute after normalization");
 });
 
@@ -109,6 +127,39 @@ test("approval summary includes tool and target for bash", () => {
   assert.match(summary, /Target: rm -rf \/$/);
 });
 
+test("buildAuditRecord includes all passed fields", () => {
+  const record = buildAuditRecord({
+    phase: "before_tool_call",
+    toolName: "read",
+    subject: "/tmp/file.txt",
+    decision: "allow",
+    grantId: "grant-123",
+    jobId: "cron-456",
+    agentId: "comercial",
+    policyHash: "sha256:abc123def456"
+  });
+  assert.equal(record.pluginId, "security-watch");
+  assert.equal(record.grantId, "grant-123");
+  assert.equal(record.jobId, "cron-456");
+  assert.equal(record.agentId, "comercial");
+  assert.equal(record.policyHash, "sha256:abc123def456");
+  assert.ok(record.timestamp);
+});
+
+test("computePolicyHash returns stable hash for same policy", () => {
+  const hash1 = computePolicyHash(policy);
+  const hash2 = computePolicyHash(policy);
+  assert.equal(hash1, hash2);
+  assert.match(hash1, /^sha256:[a-f0-9]+$/);
+});
+
+test("computePolicyHash changes when policy changes", () => {
+  const hash1 = computePolicyHash(policy);
+  const modifiedPolicy = { ...policy, trustedDomains: [...policy.trustedDomains, "evil.com"] };
+  const hash2 = computePolicyHash(modifiedPolicy);
+  assert.notEqual(hash1, hash2);
+});
+
 test("default approval timeout is five minutes", () => {
   const loaded = loadPolicy({});
   assert.equal(loaded.approvalTimeoutMs, 300000);
@@ -118,6 +169,34 @@ test("automation blocks when matching preapproval is missing", () => {
   const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/secret.txt" } }, policy, { isAutomation: true, jobId: "job-1", agentId: "agent-1" });
   assert.equal(result.outcome, "block");
   assert.ok(result.reasons.includes("preapproval:missing_or_drifted"));
+});
+
+test("automation context: blocks bash with preapproval:missing when no grant exists", () => {
+  const result = evaluateToolCall(
+    { toolName: "bash", params: { command: "curl https://api.example.com" } },
+    policy,
+    { isAutomation: true, jobId: "cron-123", agentId: "comercial" }
+  );
+  assert.equal(result.outcome, "block");
+  assert.ok(result.reasons.includes("preapproval:missing_or_drifted"));
+});
+
+test("interactive context: prompts approval for same command", () => {
+  const result = evaluateToolCall(
+    { toolName: "bash", params: { command: "curl https://api.example.com" } },
+    policy,
+    { isAutomation: false }
+  );
+  assert.equal(result.outcome, "approval");
+});
+
+test("automation without jobId is treated as interactive", () => {
+  const result = evaluateToolCall(
+    { toolName: "bash", params: { command: "curl https://api.example.com" } },
+    policy,
+    { isAutomation: true }
+  );
+  assert.equal(result.outcome, "approval");
 });
 
 test("automation allows when matching approved preapproval exists", async () => {
@@ -137,4 +216,27 @@ test("automation without context behaves like normal evaluation", () => {
   const baseline = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/secret.txt" } }, policy);
   const withContext = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/secret.txt" } }, policy, { isAutomation: false });
   assert.deepEqual(withContext, baseline);
+});
+
+test("SessionApprovalCache records and retrieves approvals", () => {
+  const cache = new SessionApprovalCache();
+  cache.record("session-1", "read", "/home/openclaw/.openclaw/openclaw.json");
+  assert.ok(cache.has("session-1", "read", "/home/openclaw/.openclaw/openclaw.json"));
+  assert.ok(!cache.has("session-1", "write", "/home/openclaw/.openclaw/openclaw.json"));
+  assert.ok(!cache.has("session-2", "read", "/home/openclaw/.openclaw/openclaw.json"));
+});
+
+test("SessionApprovalCache clear removes session entries only", () => {
+  const cache = new SessionApprovalCache();
+  cache.record("session-1", "read", "/tmp/a.txt");
+  cache.record("session-2", "read", "/tmp/b.txt");
+  cache.clear("session-1");
+  assert.ok(!cache.has("session-1", "read", "/tmp/a.txt"));
+  assert.ok(cache.has("session-2", "read", "/tmp/b.txt"));
+});
+
+test("SessionApprovalCache does not match different subjects", () => {
+  const cache = new SessionApprovalCache();
+  cache.record("s1", "read", "/tmp/a.txt");
+  assert.ok(!cache.has("s1", "read", "/tmp/b.txt"));
 });

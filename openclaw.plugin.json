@@ -24,7 +24,7 @@
       },
       "approvalTimeoutBehavior": {
         "type": "string",
-        "enum": ["allow", "deny"]
+        "enum": ["deny"]
       },
       "blockOnValidatorFailure": {
         "type": "boolean"
