@@ -36,7 +36,13 @@ test("allows trusted docs host", () => {
 });
 
 test("allows absolute workspace reads regardless of filename allowlist", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/ICP.md" } }, policy);
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("allows another absolute workspace read regardless of filename", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/notes/project-notes.md" } }, policy);
   assert.equal(result.outcome, "allow");
   assert.equal(result.reasons[0], "read_allow:trusted_workspace");
 });
@@ -65,7 +71,7 @@ test("still allows explicit external docs outside workspace", () => {
 });
 
 test("still requires approval for write to trusted workspace", () => {
-  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/ICP.md" } }, policy);
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy);
   assert.equal(result.outcome, "approval");
 });
 
