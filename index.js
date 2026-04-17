@@ -63,7 +63,7 @@ export default definePluginEntry({
               description: summarizeDecision(policy, decision),
               severity: decision.severity,
               timeoutMs: policy.approvalTimeoutMs,
-              timeoutBehavior: policy.approvalTimeoutBehavior,
+              timeoutBehavior: context.isAutomation ? "deny" : policy.approvalTimeoutBehavior,
               onResolution: (resolution) => {
                 logSafe(policy, buildAuditRecord({ phase: "approval_resolution", resolution, reasons: decision.reasons, severity: decision.severity, subject: decision.subject, ...scope }), api.logger);
               }
