@@ -47,6 +47,52 @@ test("resolves absolute workspace HEARTBEAT.md read via readAllow", () => {
   assert.equal(result.reasons[0], "read_allow:trusted_external_doc");
 });
 
+test("allows relative ICP.md read via readAllow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "ICP.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows relative TOOLS.md read via readAllow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "TOOLS.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows relative AGENTS.md read via readAllow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "AGENTS.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows absolute workspace ICP.md read via trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/ICP.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+  assert.ok(result.reasons[0].includes("trusted"), "should be allowed via trusted workspace or readAllow");
+});
+
+test("allows workspace state file read via readAllow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "state/comercial_heartbeat_seen_messages.txt" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows workspace memory file read via readAllow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "memory/2026-03-19.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows workspace draft file read via readAllow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "work/drafts/2026-04-07 - Lead - Alpha Lead Academy (Lucy Mae).md" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("still requires approval for write to trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/ICP.md" } }, policy);
+  assert.equal(result.outcome, "approval");
+});
+
+test("still requires approval for read of openclaw.json (not in workspace)", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/openclaw.json" } }, policy);
+  assert.equal(result.outcome, "approval");
+});
+
 test("relative path is resolved to absolute for workspace trust check", () => {
   const result = evaluateToolCall({ toolName: "read", params: { path: "somefile.txt" } }, policy);
   assert.equal(result.outcome, "approval");
