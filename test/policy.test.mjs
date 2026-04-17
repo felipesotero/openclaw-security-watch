@@ -35,20 +35,58 @@ test("allows trusted docs host", () => {
   assert.equal(result.outcome, "allow");
 });
 
-test("resolves relative HEARTBEAT.md read via readAllow", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { path: "HEARTBEAT.md" } }, policy);
+test("allows absolute workspace reads regardless of filename allowlist", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy);
   assert.equal(result.outcome, "allow");
-  assert.equal(result.reasons[0], "read_allow:trusted_external_doc");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace");
 });
 
-test("resolves absolute workspace HEARTBEAT.md read via readAllow", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/HEARTBEAT.md" } }, policy);
+test("allows another absolute workspace read regardless of filename", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/notes/project-notes.md" } }, policy);
   assert.equal(result.outcome, "allow");
-  assert.equal(result.reasons[0], "read_allow:trusted_external_doc");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace");
 });
 
-test("relative path is resolved to absolute for workspace trust check", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { path: "somefile.txt" } }, policy);
+test("allows relative workspace file reads regardless of filename", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "notes/custom-playbook.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace_relative");
+});
+
+test("allows relative workspace state file reads", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "state/comercial_heartbeat_seen_messages.txt" } }, policy);
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace_relative");
+});
+
+test("requires approval for relative parent traversal outside workspace", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "../.openclaw/openclaw.json" } }, policy);
   assert.equal(result.outcome, "approval");
+});
+
+test("still allows explicit external docs outside workspace", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "~/.openclaw/extensions/security-watch/README.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_external_doc");
+});
+
+test("still requires approval for write to trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy);
+  assert.equal(result.outcome, "approval");
+});
+
+test("still requires approval for edit to trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "edit", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/notes/custom-playbook.md" } }, policy);
+  assert.equal(result.outcome, "approval");
+});
+
+test("still requires approval for read of openclaw.json (not in workspace)", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/openclaw.json" } }, policy);
+  assert.equal(result.outcome, "approval");
+});
+
+test("relative workspace path is normalized to absolute subject before allow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "somefile.txt" } }, policy);
+  assert.equal(result.outcome, "allow");
   assert.ok(result.subject.startsWith("/"), "subject should be absolute after normalization");
 });
