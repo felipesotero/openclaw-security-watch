@@ -34,3 +34,21 @@ test("allows trusted docs host", () => {
   const result = evaluateToolCall({ toolName: "webfetch", params: { url: "https://docs.openclaw.ai/plugins/sdk-overview" } }, policy);
   assert.equal(result.outcome, "allow");
 });
+
+test("resolves relative HEARTBEAT.md read via readAllow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "HEARTBEAT.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_external_doc");
+});
+
+test("resolves absolute workspace HEARTBEAT.md read via readAllow", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/HEARTBEAT.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_external_doc");
+});
+
+test("relative path is resolved to absolute for workspace trust check", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "somefile.txt" } }, policy);
+  assert.equal(result.outcome, "approval");
+  assert.ok(result.subject.startsWith("/"), "subject should be absolute after normalization");
+});
