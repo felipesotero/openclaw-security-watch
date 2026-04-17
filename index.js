@@ -4,6 +4,7 @@ import {
   buildAuditRecord,
   evaluateToolCall,
   loadPolicy,
+  SessionApprovalCache,
   summarizeDecision
 } from "./lib/policy.js";
 
@@ -20,6 +21,8 @@ export default definePluginEntry({
   name: "Security Watch",
   description: "Fail-closed before_tool_call guardrails for sensitive tools with audit logs and approvals",
   register(api) {
+    const sessionCache = new SessionApprovalCache();
+
     api.on("before_tool_call", async (event, ctx) => {
       const policy = loadPolicy(api.pluginConfig ?? {});
       const context = {
@@ -57,6 +60,19 @@ export default definePluginEntry({
             };
           }
 
+          if (sessionCache.has(ctx.sessionId, event.toolName, decision.subject)) {
+            logSafe(policy, buildAuditRecord({
+              phase: "before_tool_call",
+              classification: "session_dedup",
+              decision: "allow",
+              reasons: ["session_approval_cached"],
+              severity: "info",
+              subject: decision.subject,
+              ...scope
+            }), api.logger);
+            return;
+          }
+
           return {
             requireApproval: {
               title: `Security Watch approval for ${event.toolName}`,
@@ -65,6 +81,9 @@ export default definePluginEntry({
               timeoutMs: policy.approvalTimeoutMs,
               timeoutBehavior: context.isAutomation ? "deny" : policy.approvalTimeoutBehavior,
               onResolution: (resolution) => {
+                if (resolution === "approved" || resolution === "allow") {
+                  sessionCache.record(ctx.sessionId, event.toolName, decision.subject);
+                }
                 logSafe(policy, buildAuditRecord({ phase: "approval_resolution", resolution, reasons: decision.reasons, severity: decision.severity, subject: decision.subject, ...scope }), api.logger);
               }
             }
