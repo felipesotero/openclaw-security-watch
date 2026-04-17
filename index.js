@@ -22,6 +22,11 @@ export default definePluginEntry({
   register(api) {
     api.on("before_tool_call", async (event, ctx) => {
       const policy = loadPolicy(api.pluginConfig ?? {});
+      const context = {
+        jobId: ctx.jobId || ctx.runId,
+        agentId: ctx.agentId,
+        isAutomation: Boolean(ctx.jobId || ctx.cronJobId)
+      };
       const scope = {
         agentId: ctx.agentId,
         sessionId: ctx.sessionId,
@@ -32,7 +37,7 @@ export default definePluginEntry({
       };
 
       try {
-        const decision = evaluateToolCall(event, policy);
+        const decision = evaluateToolCall(event, policy, context);
         logSafe(policy, buildAuditRecord({ phase: "before_tool_call", classification: decision.outcome === "allow" ? "no_match" : "threat_detected", decision: decision.outcome, reasons: decision.reasons, severity: decision.severity, subject: decision.subject, ...scope }), api.logger);
 
         if (policy.mode === "monitor") return;
