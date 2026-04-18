@@ -3,10 +3,33 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SessionApprovalCache, buildAuditRecord, computePolicyHash, evaluateToolCall, loadPolicy, summarizeDecision } from "../lib/policy.js";
+import { SessionApprovalCache, buildAuditRecord, computePolicyHash, evaluateToolCall, extractJobId, isAutomationContext, loadPolicy, normalizePolicyPath, summarizeDecision } from "../lib/policy.js";
 import { addPendingGrant, findMatchingGrant, loadPreapprovals } from "../lib/preapprovals.js";
 
 const policy = loadPolicy({ mode: "approval" });
+const baseDir = "/tmp/security-watch-workspace";
+
+test("relative path with baseDir resolves against baseDir", () => {
+  const p = normalizePolicyPath("work/drafts/x.md", { baseDir });
+  assert.equal(p, "/tmp/security-watch-workspace/work/drafts/x.md");
+});
+
+test("relative path without baseDir does not use cwd", () => {
+  const p = normalizePolicyPath("work/drafts/x.md");
+  assert.equal(p, "work/drafts/x.md");
+});
+
+test("absolute path unaffected by baseDir", () => {
+  const p = normalizePolicyPath("/etc/hosts", { baseDir });
+  assert.equal(p, "/etc/hosts");
+});
+
+test("relative path normalization is exact", () => {
+  assert.equal(normalizePolicyPath("a/../b.txt"), "b.txt");
+  assert.equal(normalizePolicyPath("./foo/bar"), "foo/bar");
+  assert.equal(normalizePolicyPath("/abs/path"), "/abs/path");
+  assert.equal(normalizePolicyPath("rel/path", { baseDir: "/ws" }), "/ws/rel/path");
+});
 
 test("blocks destructive root delete command", () => {
   const result = evaluateToolCall({ toolName: "bash", params: { command: "rm -rf /" } }, policy);
@@ -40,24 +63,57 @@ test("allows trusted docs host", () => {
 });
 
 test("allows absolute workspace reads regardless of filename allowlist", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy);
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "allow");
   assert.equal(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("trusts exact workspace root path", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace" });
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("trusts nested file inside workspace", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace/nested/file.txt" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace" });
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("does not trust sibling directory that only shares workspace prefix", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-evil/secret.txt" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace" });
+  assert.notEqual(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("rejects symlink inside trusted workspace whose realpath escapes prefix", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "security-watch-symlink-"));
+  const workspace = path.join(tempDir, "workspace");
+  const linkPath = path.join(workspace, "hostname-link");
+  try {
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.symlinkSync("/etc/hostname", linkPath);
+  } catch {
+    return;
+  }
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: linkPath } }, policy, { workspaceDir: workspace });
+  assert.notEqual(result.reasons[0], "read_allow:trusted_workspace");
 });
 
 test("allows another absolute workspace read regardless of filename", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/notes/project-notes.md" } }, policy);
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/notes/project-notes.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "allow");
   assert.equal(result.reasons[0], "read_allow:trusted_workspace");
 });
 
-test("relative workspace file reads outside trusted prefixes require approval", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { path: "notes/custom-playbook.md" } }, policy);
-  assert.equal(result.outcome, "approval");
+test("workspace-relative read allowed when baseDir trusted", () => {
+  const trustedPolicy = { ...policy, trustedWorkspacePrefixes: [baseDir] };
+  const result = evaluateToolCall({ toolName: "read", params: { path: "notes/custom-playbook.md" } }, trustedPolicy, { workspaceDir: baseDir });
+  assert.equal(result.outcome, "allow");
 });
 
 test("relative workspace state file reads outside trusted prefixes require approval", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { path: "state/comercial_heartbeat_seen_messages.txt" } }, policy);
+  const restrictivePolicy = { ...policy, trustedWorkspacePrefixes: ["/nonexistent/workspace"] };
+  const result = evaluateToolCall({ toolName: "read", params: { path: "state/comercial_heartbeat_seen_messages.txt" } }, restrictivePolicy, { workspaceDir: baseDir });
   assert.equal(result.outcome, "approval");
 });
 
@@ -76,13 +132,14 @@ test("relative path that resolves outside all workspace prefixes requires approv
 test("relative path with deep traversal outside workspace requires approval", () => {
   const result = evaluateToolCall(
     { toolName: "read", params: { path: "../../etc/passwd" } },
-    policy
+    policy,
+    { workspaceDir: baseDir }
   );
   assert.equal(result.outcome, "approval");
 });
 
 test("requires approval for relative parent traversal outside workspace", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { path: "../.openclaw/openclaw.json" } }, policy);
+  const result = evaluateToolCall({ toolName: "read", params: { path: "../.openclaw/openclaw.json" } }, policy, { workspaceDir: baseDir });
   assert.equal(result.outcome, "approval");
 });
 
@@ -93,12 +150,12 @@ test("still allows explicit external docs outside workspace", () => {
 });
 
 test("still requires approval for write to trusted workspace", () => {
-  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy);
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "approval");
 });
 
 test("still requires approval for edit to trusted workspace", () => {
-  const result = evaluateToolCall({ toolName: "edit", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/notes/custom-playbook.md" } }, policy);
+  const result = evaluateToolCall({ toolName: "edit", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/notes/custom-playbook.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "approval");
 });
 
@@ -108,7 +165,7 @@ test("still requires approval for read of openclaw.json (not in workspace)", () 
 });
 
 test("relative workspace path is normalized to absolute subject before approval", () => {
-  const result = evaluateToolCall({ toolName: "read", params: { path: "somefile.txt" } }, policy);
+  const result = evaluateToolCall({ toolName: "read", params: { path: "somefile.txt" } }, policy, { workspaceDir: baseDir });
   assert.equal(result.outcome, "approval");
   assert.ok(result.subject.startsWith("/"), "subject should be absolute after normalization");
 });
@@ -160,9 +217,30 @@ test("computePolicyHash changes when policy changes", () => {
   assert.notEqual(hash1, hash2);
 });
 
-test("default approval timeout is five minutes", () => {
+test("default approval timeout is ten minutes", () => {
   const loaded = loadPolicy({});
-  assert.equal(loaded.approvalTimeoutMs, 300000);
+  assert.equal(loaded.approvalTimeoutMs, 600000);
+});
+
+test("evaluateToolCall requires approval for relative path when no baseDir", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { path: "work/drafts/a.md" } }, policy, {});
+  assert.equal(result.outcome, "approval");
+});
+
+test("isAutomationContext detects cron, heartbeat, main, and job ids", () => {
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:CRON:abc" }), true);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:Heartbeat:abc" }), true);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:cronjob" }), false);
+  assert.equal(isAutomationContext({ sessionKey: "agent:cronfish:main" }), false);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:main", jobId: "j" }), true);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:main", cronJobId: "c" }), true);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:main" }), false);
+});
+
+test("extractJobId prefers jobId then cronJobId", () => {
+  assert.equal(extractJobId({ jobId: "job-1", cronJobId: "cron-2", runId: "run-3" }), "job-1");
+  assert.equal(extractJobId({ cronJobId: "cron-2", runId: "run-3" }), "cron-2");
+  assert.equal(extractJobId({ runId: "run-3" }), null);
 });
 
 test("automation blocks when matching preapproval is missing", () => {
@@ -215,7 +293,9 @@ test("automation allows when matching approved preapproval exists", async () => 
 test("automation without context behaves like normal evaluation", () => {
   const baseline = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/secret.txt" } }, policy);
   const withContext = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/secret.txt" } }, policy, { isAutomation: false });
-  assert.deepEqual(withContext, baseline);
+  const { timestamp: _baselineTs, ...baselineRest } = baseline;
+  const { timestamp: _withContextTs, ...withContextRest } = withContext;
+  assert.deepEqual(withContextRest, baselineRest);
 });
 
 test("SessionApprovalCache records and retrieves approvals", () => {
