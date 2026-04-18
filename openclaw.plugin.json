@@ -18,6 +18,20 @@
       "logPath": {
         "type": "string"
       },
+      "notifyCommand": {
+        "anyOf": [
+          { "type": "array", "items": { "type": "string" } },
+          { "type": "null" }
+        ],
+        "default": null
+      },
+      "channelPriority": {
+        "anyOf": [
+          { "type": "array", "items": { "type": "string" } },
+          { "type": "null" }
+        ],
+        "default": null
+      },
       "approvalTimeoutMs": {
         "type": "integer",
         "minimum": 1000,
@@ -44,6 +58,14 @@
     "logPath": {
       "label": "Log path",
       "help": "Optional JSONL audit path. Defaults to ~/.openclaw/logs/security-watch-events.jsonl"
+    },
+    "notifyCommand": {
+      "label": "Notify command",
+      "help": "Optional argv template array for custom notification dispatch."
+    },
+    "channelPriority": {
+      "label": "Channel priority",
+      "help": "Optional channel kind order; defaults to the built-in human channel priority."
     },
     "approvalTimeoutMs": {
       "label": "Approval timeout (ms)",

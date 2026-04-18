@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SessionApprovalCache, buildAuditRecord, computePolicyHash, evaluateToolCall, isAutomationContext, loadPolicy, normalizePolicyPath, summarizeDecision } from "../lib/policy.js";
+import { SessionApprovalCache, buildAuditRecord, computePolicyHash, evaluateToolCall, extractJobId, isAutomationContext, loadPolicy, normalizePolicyPath, summarizeDecision } from "../lib/policy.js";
 import { addPendingGrant, findMatchingGrant, loadPreapprovals } from "../lib/preapprovals.js";
 
 const policy = loadPolicy({ mode: "approval" });
@@ -16,12 +16,19 @@ test("relative path with baseDir resolves against baseDir", () => {
 
 test("relative path without baseDir does not use cwd", () => {
   const p = normalizePolicyPath("work/drafts/x.md");
-  assert.ok(!p.startsWith(process.cwd()));
+  assert.equal(p, "work/drafts/x.md");
 });
 
 test("absolute path unaffected by baseDir", () => {
   const p = normalizePolicyPath("/etc/hosts", { baseDir });
   assert.equal(p, "/etc/hosts");
+});
+
+test("relative path normalization is exact", () => {
+  assert.equal(normalizePolicyPath("a/../b.txt"), "b.txt");
+  assert.equal(normalizePolicyPath("./foo/bar"), "foo/bar");
+  assert.equal(normalizePolicyPath("/abs/path"), "/abs/path");
+  assert.equal(normalizePolicyPath("rel/path", { baseDir: "/ws" }), "/ws/rel/path");
 });
 
 test("blocks destructive root delete command", () => {
@@ -59,6 +66,37 @@ test("allows absolute workspace reads regardless of filename allowlist", () => {
   const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "allow");
   assert.equal(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("trusts exact workspace root path", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace" });
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("trusts nested file inside workspace", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace/nested/file.txt" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace" });
+  assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("does not trust sibling directory that only shares workspace prefix", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/.openclaw/workspace-evil/secret.txt" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace" });
+  assert.notEqual(result.reasons[0], "read_allow:trusted_workspace");
+});
+
+test("rejects symlink inside trusted workspace whose realpath escapes prefix", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "security-watch-symlink-"));
+  const workspace = path.join(tempDir, "workspace");
+  const linkPath = path.join(workspace, "hostname-link");
+  try {
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.symlinkSync("/etc/hostname", linkPath);
+  } catch {
+    return;
+  }
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: linkPath } }, policy, { workspaceDir: workspace });
+  assert.notEqual(result.reasons[0], "read_allow:trusted_workspace");
 });
 
 test("allows another absolute workspace read regardless of filename", () => {
@@ -189,11 +227,20 @@ test("evaluateToolCall requires approval for relative path when no baseDir", () 
   assert.equal(result.outcome, "approval");
 });
 
-test("isAutomationContext detects cron, heartbeat, main, and legacy jobId", () => {
-  assert.equal(isAutomationContext({ sessionKey: "agent:x:cron:abc" }), true);
-  assert.equal(isAutomationContext({ sessionKey: "agent:x:heartbeat:abc" }), true);
-  assert.equal(isAutomationContext({ sessionKey: "agent:x:main" }), false);
+test("isAutomationContext detects cron, heartbeat, main, and job ids", () => {
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:CRON:abc" }), true);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:Heartbeat:abc" }), true);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:cronjob" }), false);
+  assert.equal(isAutomationContext({ sessionKey: "agent:cronfish:main" }), false);
   assert.equal(isAutomationContext({ sessionKey: "agent:x:main", jobId: "j" }), true);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:main", cronJobId: "c" }), true);
+  assert.equal(isAutomationContext({ sessionKey: "agent:x:main" }), false);
+});
+
+test("extractJobId prefers jobId then cronJobId", () => {
+  assert.equal(extractJobId({ jobId: "job-1", cronJobId: "cron-2", runId: "run-3" }), "job-1");
+  assert.equal(extractJobId({ cronJobId: "cron-2", runId: "run-3" }), "cron-2");
+  assert.equal(extractJobId({ runId: "run-3" }), null);
 });
 
 test("automation blocks when matching preapproval is missing", () => {
