@@ -4,6 +4,7 @@ import {
   buildAuditRecord,
   evaluateToolCall,
   computePolicyHash,
+  isAutomationContext,
   loadPolicy,
   SessionApprovalCache,
   summarizeDecision
@@ -30,7 +31,7 @@ export default definePluginEntry({
       const context = {
         jobId: ctx.jobId || ctx.runId,
         agentId: ctx.agentId,
-        isAutomation: Boolean(ctx.jobId || ctx.cronJobId)
+        isAutomation: isAutomationContext(ctx)
       };
       const scope = {
         agentId: ctx.agentId,

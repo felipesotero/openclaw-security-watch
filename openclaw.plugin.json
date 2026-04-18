@@ -20,7 +20,8 @@
       },
       "approvalTimeoutMs": {
         "type": "integer",
-        "minimum": 1000
+        "minimum": 1000,
+        "default": 600000
       },
       "approvalTimeoutBehavior": {
         "type": "string",
