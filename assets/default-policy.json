@@ -34,6 +34,9 @@
       "^/home/[^/]+/\\.local/lib/node_modules/openclaw/README\\.md$"
     ]
   },
+  "writeAllow": {
+    "workspaceSubdirPatterns": []
+  },
   "critical": {
     "toolNames": ["bash", "exec", "read", "write", "edit", "webfetch"],
     "commandPatterns": [

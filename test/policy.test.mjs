@@ -8,6 +8,9 @@ import { addPendingGrant, findMatchingGrant, loadPreapprovals } from "../lib/pre
 
 const policy = loadPolicy({ mode: "approval" });
 const baseDir = "/tmp/security-watch-workspace";
+function policyWithWriteAllow(patterns) {
+  return { ...policy, writeAllow: { workspaceSubdirPatterns: patterns } };
+}
 
 test("relative path with baseDir resolves against baseDir", () => {
   const p = normalizePolicyPath("work/drafts/x.md", { baseDir });
@@ -169,9 +172,15 @@ test("still requires approval for write to trusted workspace", () => {
   assert.equal(result.outcome, "approval");
 });
 
-test("allows write to work drafts inside trusted workspace", () => {
+test("default policy requires approval for write to work drafts inside trusted workspace", () => {
   const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/file.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "approval");
+});
+
+test("configured writeAllow allows write to work drafts inside trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/file.md" } }, policyWithWriteAllow(["^work/drafts/"]), { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "allow");
+  assert.equal(result.reasons[0], "write_allow:trusted_workspace_configured");
 });
 
 test("blocks write to nonexistent file beneath symlinked operational parent", () => {
@@ -191,18 +200,33 @@ test("blocks write to nonexistent file beneath symlinked operational parent", ()
   assert.equal(result.outcome, "approval");
 });
 
-test("allows write to memory inside trusted workspace", () => {
+test("default policy requires approval for write to memory inside trusted workspace", () => {
   const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/memory/2026-04-19.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "approval");
+});
+
+test("configured writeAllow allows write to memory inside trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/memory/2026-04-19.md" } }, policyWithWriteAllow(["^memory/"]), { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "allow");
 });
 
-test("allows write to work attachments inside trusted workspace", () => {
+test("default policy requires approval for write to work attachments inside trusted workspace", () => {
   const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/attachments/invoice.pdf" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "approval");
+});
+
+test("configured writeAllow allows write to work attachments inside trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/attachments/invoice.pdf" } }, policyWithWriteAllow(["^work/attachments/"]), { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "allow");
 });
 
-test("allows edit to trusted workspace operational outputs", () => {
+test("default policy requires approval for edit to trusted workspace operational outputs", () => {
   const result = evaluateToolCall({ toolName: "edit", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/file.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "approval");
+});
+
+test("configured writeAllow allows edit to trusted workspace operational outputs", () => {
+  const result = evaluateToolCall({ toolName: "edit", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/file.md" } }, policyWithWriteAllow(["^work/drafts/", "^memory/"]), { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "allow");
 });
 
@@ -213,6 +237,11 @@ test("still requires approval for sibling write outside trusted workspace", () =
 
 test("still blocks secret write inside trusted workspace", () => {
   const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/.env" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "block");
+});
+
+test("writeAllow does not bypass critical path blocks", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/.env" } }, policyWithWriteAllow(["^work/drafts/"]), { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "block");
 });
 
@@ -275,6 +304,13 @@ test("computePolicyHash returns stable hash for same policy", () => {
 test("computePolicyHash changes when policy changes", () => {
   const hash1 = computePolicyHash(policy);
   const modifiedPolicy = { ...policy, trustedDomains: [...policy.trustedDomains, "evil.com"] };
+  const hash2 = computePolicyHash(modifiedPolicy);
+  assert.notEqual(hash1, hash2);
+});
+
+test("computePolicyHash changes when writeAllow changes", () => {
+  const hash1 = computePolicyHash(policy);
+  const modifiedPolicy = { ...policy, writeAllow: { workspaceSubdirPatterns: ["^work/drafts/"] } };
   const hash2 = computePolicyHash(modifiedPolicy);
   assert.notEqual(hash1, hash2);
 });
