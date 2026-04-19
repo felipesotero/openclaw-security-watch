@@ -52,6 +52,21 @@ test("allows plugin manifest outside workspace", () => {
   assert.equal(result.outcome, "allow");
 });
 
+test("allows repo root README reads", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/repos/openclaw-security-watch/README.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows repo docs tree reads", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/repos/openclaw-security-watch/docs/reference/policy.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows repo agent instruction reads", () => {
+  const result = evaluateToolCall({ toolName: "read", params: { filePath: "/home/openclaw/repos/openclaw-security-watch/AGENTS.md" } }, policy);
+  assert.equal(result.outcome, "allow");
+});
+
 test("still requires approval for arbitrary package tree reads", () => {
   const result = evaluateToolCall({ toolName: "read", params: { filePath: "~/.local/lib/node_modules/openclaw/node_modules/foo/SKILL.md" } }, policy);
   assert.equal(result.outcome, "approval");
@@ -152,6 +167,53 @@ test("still allows explicit external docs outside workspace", () => {
 test("still requires approval for write to trusted workspace", () => {
   const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/client-brief.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
   assert.equal(result.outcome, "approval");
+});
+
+test("allows write to work drafts inside trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/file.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "allow");
+});
+
+test("blocks write to nonexistent file beneath symlinked operational parent", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "security-watch-symlink-write-"));
+  const workspace = path.join(tempDir, "workspace");
+  const outside = path.join(tempDir, "outside");
+  const linkParent = path.join(workspace, "work", "drafts");
+  const target = path.join(linkParent, "new-note.md");
+  try {
+    fs.mkdirSync(path.join(workspace, "work"), { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    fs.symlinkSync(outside, linkParent);
+  } catch {
+    return;
+  }
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: target } }, policy, { workspaceDir: workspace });
+  assert.equal(result.outcome, "approval");
+});
+
+test("allows write to memory inside trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/memory/2026-04-19.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows write to work attachments inside trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/attachments/invoice.pdf" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "allow");
+});
+
+test("allows edit to trusted workspace operational outputs", () => {
+  const result = evaluateToolCall({ toolName: "edit", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/file.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "allow");
+});
+
+test("still requires approval for sibling write outside trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial-evil/work/drafts/file.md" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "approval");
+});
+
+test("still blocks secret write inside trusted workspace", () => {
+  const result = evaluateToolCall({ toolName: "write", params: { filePath: "/home/openclaw/.openclaw/workspace-comercial/work/drafts/.env" } }, policy, { workspaceDir: "/home/openclaw/.openclaw/workspace-comercial" });
+  assert.equal(result.outcome, "block");
 });
 
 test("still requires approval for edit to trusted workspace", () => {
