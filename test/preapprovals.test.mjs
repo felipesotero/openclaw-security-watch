@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { addPendingGrant, findMatchingGrant, loadPreapprovals, savePreapprovals, approveGrant, revokeGrant, listGrants } from "../lib/preapprovals.js";
+import { addPendingGrant, findMatchingGrant, loadPreapprovals, savePreapprovals, approveGrant, revokeGrant, listGrants, createBootstrapGrants } from "../lib/preapprovals.js";
+import { evaluateToolCall, loadPolicy } from "../lib/policy.js";
 
 test("loadPreapprovals returns default for missing file", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "security-watch-preapprovals-"));
@@ -165,6 +166,72 @@ test("listGrants filters by jobId", () => {
   assert.equal(listGrants(data, { jobId: "j1" }).length, 1);
 });
 
+test("createBootstrapGrants builds deterministic grant descriptors", () => {
+  const grants = createBootstrapGrants({
+    jobId: "cron-1",
+    agentId: "agent-1",
+    paths: ["/var/lib/openclaw/state", "/etc/openclaw/config/"] ,
+    writes: ["/var/lib/openclaw/output/"],
+    edits: ["/etc/openclaw/config.yaml"],
+    commands: ["/usr/bin/systemctl restart openclaw-gateway.service"],
+    urls: ["https://example.com/webhook"]
+  });
+
+  assert.equal(grants.length, 7);
+  assert.deepEqual(grants.map((g) => g.toolName), ["read", "read", "write", "edit", "bash", "exec", "webfetch"]);
+  assert.deepEqual(grants.map((g) => g.jobId), ["cron-1", "cron-1", "cron-1", "cron-1", "cron-1", "cron-1", "cron-1"]);
+  assert.deepEqual(grants.map((g) => g.agentId), ["agent-1", "agent-1", "agent-1", "agent-1", "agent-1", "agent-1", "agent-1"]);
+  assert.equal(grants[0].subjectPattern, "^/var/lib/openclaw/state$");
+  assert.equal(grants[1].subjectPattern, "^/etc/openclaw/config(?:/.*)?$");
+  assert.equal(grants[2].subjectPattern, "^/var/lib/openclaw/output(?:/.*)?$");
+  assert.equal(grants[3].subjectPattern, "^/etc/openclaw/config\\.yaml$");
+  assert.equal(grants[4].subjectPattern, "^/usr/bin/systemctl restart openclaw-gateway\\.service$");
+  assert.equal(grants[5].subjectPattern, "^/usr/bin/systemctl restart openclaw-gateway\\.service$");
+  assert.equal(grants[6].subjectPattern, "^https://example\\.com/webhook$");
+});
+
+test("createBootstrapGrants generates both bash and exec grants for commands", () => {
+  const grants = createBootstrapGrants({
+    jobId: "j",
+    agentId: "a",
+    commands: ["systemctl restart gateway"]
+  });
+  assert.equal(grants.length, 2);
+  assert.deepEqual(grants.map((g) => g.toolName).sort(), ["bash", "exec"]);
+  assert.equal(grants[0].subjectPattern, grants[1].subjectPattern);
+});
+
+test("createBootstrapGrants with baseDir resolves relative paths", () => {
+  const grants = createBootstrapGrants({
+    jobId: "j",
+    agentId: "a",
+    paths: ["work/drafts/"],
+    baseDir: "/home/openclaw/.openclaw/workspace-comercial"
+  });
+  assert.equal(grants.length, 1);
+  assert.match(grants[0].subjectPattern, /workspace-comercial\/work\/drafts/);
+});
+
+test("createBootstrapGrants expands home-relative path subjects", () => {
+  const home = os.homedir();
+  const grants = createBootstrapGrants({
+    jobId: "cron-2",
+    agentId: "agent-2",
+    paths: ["~/.openclaw/state/"],
+    writes: ["~/.openclaw/output"],
+    edits: ["~/.openclaw/config.json"]
+  });
+
+  assert.equal(grants.length, 3);
+  assert.equal(grants[0].subjectPattern, `^${home}/\\.openclaw/state(?:/.*)?$`);
+  assert.equal(grants[1].subjectPattern, `^${home}/\\.openclaw/output$`);
+  assert.equal(grants[2].subjectPattern, `^${home}/\\.openclaw/config\\.json$`);
+});
+
+test("createBootstrapGrants returns empty array for empty input", () => {
+  assert.deepEqual(createBootstrapGrants({ jobId: "j", agentId: "a" }), []);
+});
+
 test("savePreapprovals writes and loadPreapprovals reads back", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sw-grant-"));
   const storePath = path.join(tempDir, "grants.json");
@@ -173,4 +240,83 @@ test("savePreapprovals writes and loadPreapprovals reads back", () => {
   const loaded = loadPreapprovals(storePath);
   assert.equal(loaded.grants.length, 1);
   assert.equal(loaded.grants[0].jobId, "j1");
+});
+
+test("E2E: bootstrap read grant matches evaluateToolCall subject", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sw-e2e-"));
+  const storePath = path.join(tempDir, "preapprovals.json");
+  const filePath = path.join(tempDir, "seen.txt");
+  const grants = createBootstrapGrants({
+    jobId: "cron-1", agentId: "comercial",
+    paths: [filePath]
+  });
+  const data = { version: 1, grants };
+  fs.writeFileSync(storePath, JSON.stringify(data));
+  const policy = { ...loadPolicy({}), preapprovals: { storePath } };
+  const result = evaluateToolCall(
+    { toolName: "read", params: { filePath } },
+    policy,
+    { isAutomation: true, jobId: "cron-1", agentId: "comercial" }
+  );
+  assert.equal(result.outcome, "allow");
+  assert.ok(result.reasons.includes("preapproval:granted"));
+});
+
+test("E2E: bootstrap bash grant matches evaluateToolCall subject", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sw-e2e-"));
+  const storePath = path.join(tempDir, "preapprovals.json");
+  const grants = createBootstrapGrants({
+    jobId: "cron-1", agentId: "comercial",
+    commands: ["curl https://api.example.com"]
+  });
+  const data = { version: 1, grants };
+  fs.writeFileSync(storePath, JSON.stringify(data));
+  const policy = { ...loadPolicy({}), preapprovals: { storePath } };
+  const result = evaluateToolCall(
+    { toolName: "bash", params: { command: "curl https://api.example.com" } },
+    policy,
+    { isAutomation: true, jobId: "cron-1", agentId: "comercial" }
+  );
+  assert.equal(result.outcome, "allow");
+  assert.ok(result.reasons.includes("preapproval:granted"));
+});
+
+test("E2E: bootstrap exec grant matches evaluateToolCall subject", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sw-e2e-"));
+  const storePath = path.join(tempDir, "preapprovals.json");
+  const grants = createBootstrapGrants({
+    jobId: "cron-1", agentId: "comercial",
+    commands: ["curl https://api.example.com"]
+  });
+  const data = { version: 1, grants };
+  fs.writeFileSync(storePath, JSON.stringify(data));
+  const policy = { ...loadPolicy({}), preapprovals: { storePath } };
+  const result = evaluateToolCall(
+    { toolName: "exec", params: { command: "curl https://api.example.com" } },
+    policy,
+    { isAutomation: true, jobId: "cron-1", agentId: "comercial" }
+  );
+  assert.equal(result.outcome, "allow");
+  assert.ok(result.reasons.includes("preapproval:granted"));
+});
+
+test("E2E: bootstrap write grant with baseDir matches relative path evaluation", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sw-e2e-"));
+  const storePath = path.join(tempDir, "preapprovals.json");
+  const wsDir = "/home/openclaw/.openclaw/workspace-comercial";
+  const grants = createBootstrapGrants({
+    jobId: "cron-1", agentId: "comercial",
+    writes: ["work/drafts/lead.md"],
+    baseDir: wsDir
+  });
+  const data = { version: 1, grants };
+  fs.writeFileSync(storePath, JSON.stringify(data));
+  const policy = { ...loadPolicy({}), preapprovals: { storePath } };
+  const result = evaluateToolCall(
+    { toolName: "write", params: { path: "work/drafts/lead.md" } },
+    policy,
+    { isAutomation: true, jobId: "cron-1", agentId: "comercial", workspaceDir: wsDir }
+  );
+  assert.equal(result.outcome, "allow");
+  assert.ok(result.reasons.includes("preapproval:granted"));
 });
