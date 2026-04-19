@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { normalizePolicyPath, workspaceTrusted } from "../lib/policy.js";
+import { canonicalizePath, workspaceTrusted } from "../lib/paths.js";
 
 test("workspace prefix fuzz never trusts siblings", () => {
   for (let i = 0; i < 75; i++) {
@@ -15,7 +15,7 @@ test("normalizePolicyPath with baseDir cannot escape resolved base", () => {
   const baseDir = "/tmp/ws";
   for (let i = 0; i < 75; i++) {
     const input = `nested/${i}/./file.txt`;
-    const normalized = normalizePolicyPath(input, { baseDir });
+    const normalized = canonicalizePath(input, { baseDir });
     assert.ok(normalized === baseDir || normalized.startsWith(baseDir + path.sep));
   }
 });
@@ -23,7 +23,7 @@ test("normalizePolicyPath with baseDir cannot escape resolved base", () => {
 test("normalizePolicyPath without baseDir keeps relative paths relative", () => {
   for (let i = 0; i < 75; i++) {
     const input = `./dir/${i}/../file.txt`;
-    const normalized = normalizePolicyPath(input);
+    const normalized = canonicalizePath(input);
     assert.equal(path.isAbsolute(normalized), false);
   }
 });
