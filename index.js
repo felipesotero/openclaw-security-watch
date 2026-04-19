@@ -1,6 +1,9 @@
+import { createRequire } from "node:module";
 let definePluginEntry = (entry) => entry;
 try {
-  ({ definePluginEntry } = await import("openclaw/plugin-sdk/plugin-entry"));
+  const _require = createRequire(import.meta.url);
+  const sdk = _require("openclaw/plugin-sdk/plugin-entry");
+  if (sdk?.definePluginEntry) definePluginEntry = sdk.definePluginEntry;
 } catch {}
 import {
   appendJsonl,
